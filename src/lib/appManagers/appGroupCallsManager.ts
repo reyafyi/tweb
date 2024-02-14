@@ -12,11 +12,13 @@
 import type GroupCallConnectionInstance from '../calls/groupCallConnectionInstance';
 import safeReplaceObject from '../../helpers/object/safeReplaceObject';
 import {nextRandomUint} from '../../helpers/random';
-import {DataJSON, GroupCall, GroupCallParticipant, GroupCallParticipantVideoSourceGroup, InputGroupCall, PhoneJoinGroupCall, PhoneJoinGroupCallPresentation, Update, Updates} from '../../layer';
+import {DataJSON, GroupCall, GroupCallParticipant, GroupCallParticipantVideoSourceGroup, GroupCallStreamChannel, InputFileLocation, InputGroupCall, PhoneJoinGroupCall, PhoneJoinGroupCallPresentation, Update, Updates} from '../../layer';
 import {logger} from '../logger';
 import {NULL_PEER_ID} from '../mtproto/mtproto_config';
 import {AppManager} from './manager';
 import getPeerId from './utils/peers/getPeerId';
+import {DcId} from '../../types';
+import {MyUploadFile} from '../mtproto/apiFileManager';
 
 export type GroupCallId = GroupCall['id'];
 export type MyGroupCall = GroupCall | InputGroupCall;
@@ -38,6 +40,17 @@ export type JoinGroupCallJsonPayload = {
 const GET_PARTICIPANTS_LIMIT = 100;
 
 export type GroupCallOutputSource = 'main' | 'presentation' | number;
+
+export interface GroupCallRtmpState {
+  channels: GroupCallStreamChannel[]
+  dcId: DcId
+}
+
+export interface CallRecordParams {
+  name: string
+  recordVideo: boolean
+  videoHorizontal: boolean
+}
 
 export class AppGroupCallsManager extends AppManager {
   private log: ReturnType<typeof logger>;
@@ -242,12 +255,13 @@ export class AppGroupCallsManager extends AppManager {
     return call;
   }
 
-  public async createGroupCall(chatId: ChatId, scheduleDate?: number, title?: string) {
+  public async createGroupCall(chatId: ChatId, scheduleDate?: number, title?: string, rtmp = false) {
     const updates = await this.apiManager.invokeApi('phone.createGroupCall', {
       peer: this.appPeersManager.getInputPeerById(chatId.toPeerId(true)),
       random_id: nextRandomUint(32),
       schedule_date: scheduleDate,
-      title
+      title,
+      rtmp_stream: rtmp
     });
 
     this.apiUpdatesManager.processUpdateMessage(updates);
@@ -258,6 +272,7 @@ export class AppGroupCallsManager extends AppManager {
 
   public getGroupCallInput(id: GroupCallId): InputGroupCall {
     const groupCall = this.getGroupCall(id);
+    if(!groupCall) throw new Error(`Group call ${id} not found`)
     return {
       _: 'inputGroupCall',
       id: groupCall.id,
@@ -380,5 +395,71 @@ export class AppGroupCallsManager extends AppManager {
     }).then((updates) => {
       this.apiUpdatesManager.processUpdateMessage(updates);
     });
+  }
+
+  public async fetchRtmpState(call: InputGroupCall, retry = 0): Promise<GroupCallRtmpState> {
+    const full = await this.getGroupCallFull(call.id)
+    if(full._ === 'groupCallDiscarded') {
+      throw new Error('Group call discarded')
+    }
+
+    const dcId = full.stream_dc_id || await this.apiManager.getBaseDcId()
+
+    try {
+      const res = await this.apiManager.invokeApi('phone.getGroupCallStreamChannels', {call}, {dcId})
+      return {channels: res.channels, dcId}
+    } catch(error: any) {
+      if(error.code === 400 && error.type.indexOf('CALL_MIGRATE') === 0) {
+        const dcId = +error.type.match(/^(CALL_MIGRATE_)(\d+)/)[2] as DcId;
+        const res = await this.apiManager.invokeApi('phone.getGroupCallStreamChannels', {call}, {dcId})
+        return {channels: res.channels, dcId}
+      }
+      if(error.type === 'GROUPCALL_INVALID' && retry < 3) {
+        // this sometimes happens for some reason. retry
+        return this.fetchRtmpState(call, retry + 1)
+      }
+
+      throw error
+    }
+  }
+
+  public fetchRtmpPart(request: InputFileLocation.inputGroupCallStream, dcId: number) {
+    return this.apiManager.invokeApi('upload.getFile', {
+      location: request,
+      offset: 0,
+      limit: 131072
+    }, {
+      dcId,
+      fileDownload: true,
+      floodMaxTimeout: 0
+    }) as Promise<MyUploadFile>
+  }
+
+  public fetchRtmpUrl(peerId: PeerId, revoke = false) {
+    return this.apiManager.invokeApi('phone.getGroupCallStreamRtmpUrl', {
+      peer: this.appPeersManager.getInputPeerById(peerId),
+      revoke
+    })
+  }
+
+  public async startRecording(call: InputGroupCall, params: CallRecordParams) {
+    const res = await this.apiManager.invokeApi('phone.toggleGroupCallRecord', {
+      start: true,
+      call,
+      video: params.recordVideo,
+      video_portrait: params.videoHorizontal,
+      title: params.name || undefined
+    })
+
+    this.apiUpdatesManager.processUpdateMessage(res)
+  }
+
+  public async stopRecording(call: InputGroupCall) {
+    const res = await this.apiManager.invokeApi('phone.toggleGroupCallRecord', {
+      start: false,
+      call
+    })
+
+    this.apiUpdatesManager.processUpdateMessage(res)
   }
 }

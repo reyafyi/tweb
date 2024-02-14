@@ -14,7 +14,7 @@ module.exports = {
     '@typescript-eslint'
   ],
   ignorePatterns: [
-    'src/vendor/**',
+    'src/vendor/**/*',
     'src/solid/**',
     'src/opus-recorder/**',
     'public/**'

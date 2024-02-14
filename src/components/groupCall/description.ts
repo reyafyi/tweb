@@ -7,6 +7,7 @@
 import {GroupCall} from '../../layer';
 import GroupCallInstance from '../../lib/calls/groupCallInstance';
 import GROUP_CALL_STATE from '../../lib/calls/groupCallState';
+import {RtmpCallInfo} from '../../lib/calls/rtmpCallsController';
 import I18n, {LangPackKey, FormatterArguments} from '../../lib/langPack';
 
 export default class GroupCallDescriptionElement {
@@ -24,15 +25,15 @@ export default class GroupCallDescriptionElement {
     this.descriptionIntl.element.remove();
   }
 
-  public update(instance: GroupCallInstance) {
-    const {state} = instance;
-
+  public update(state: GROUP_CALL_STATE, instance: GroupCallInstance | RtmpCallInfo) {
     let key: LangPackKey, args: FormatterArguments;
     if(state === GROUP_CALL_STATE.CONNECTING) {
       key = 'VoiceChat.Status.Connecting';
     } else {
       key = 'VoiceChat.Status.Members';
-      args = [(instance.groupCall as GroupCall.groupCall).participants_count];
+      args = '_type' in instance ?
+        [Math.max(0, instance.call.participants_count)] :
+        [(instance.groupCall as GroupCall.groupCall).participants_count];
     }
 
     const {descriptionIntl} = this;

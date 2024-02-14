@@ -17,6 +17,7 @@ import isInDOM from '../../helpers/dom/isInDOM';
 import renderImageFromUrl from '../../helpers/dom/renderImageFromUrl';
 import safePlay from '../../helpers/dom/safePlay';
 import setCurrentTime from '../../helpers/dom/setCurrentTime';
+import isCrbug1250841Error from '../../helpers/fixChromiumMp4.constants';
 import getMediaThumbIfNeeded from '../../helpers/getStrippedThumbIfNeeded';
 import liteMode from '../../helpers/liteMode';
 import makeError from '../../helpers/makeError';
@@ -567,6 +568,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
     }
 
     noAutoDownload = undefined;
+    let triedFixingChromeBug = false;
 
     loadPromise.then(async() => {
       if(middleware && !middleware()) {
@@ -581,6 +583,14 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
       getCacheContext();
 
       const onError = (err: any) => {
+        if(isCrbug1250841Error(err) && !triedFixingChromeBug) {
+          triedFixingChromeBug = true;
+          video.src = cacheContext.url + '?_crbug1250841';
+          video.load()
+          onMediaLoad(video).then(onLoaded, onError);
+          return
+        }
+
         console.error('video load error', video, err);
         if(spanTime) {
           spanTime.classList.add('is-error');
@@ -594,7 +604,8 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
       const onMediaLoadPromise = onMediaLoad(video);
       const videoLeakPromise = handleVideoLeak(video, onMediaLoadPromise);
       videoLeakPromise.catch(onError);
-      onMediaLoadPromise.then(() => {
+
+      const onLoaded = () => {
         if(group) {
           animationIntersector.addAnimation({
             animation: video,
@@ -621,7 +632,9 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
         } else {
           renderDeferred.resolve();
         }
-      }, onError);
+      }
+
+      onMediaLoadPromise.then(onLoaded, onError);
 
       if(altDoc && altCacheContext) {
         const sources = [

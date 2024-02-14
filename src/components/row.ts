@@ -384,6 +384,12 @@ export default class Row<T extends SliderSuperTabEventableConstructable = any> {
   }
 }
 
+export const RowTsx = (props: Partial<ConstructorParameters<typeof Row>[0]>) => {
+  const obj = new Row(props);
+
+  return obj.container;
+}
+
 export const CreateRowFromCheckboxField = (checkboxField: CheckboxField) => {
   return new Row({checkboxField, listenerSetter: checkboxField.listenerSetter});
 };
@@ -392,12 +398,13 @@ export const RadioFormFromRows = (rows: Row[], onChange: (value: string) => void
   return RadioForm(rows.map((r) => ({container: r.container, input: r.radioField.input})), onChange);
 };
 
-export const RadioFormFromValues = (values: {langPackKey: LangPackKey, value: number | string, checked?: boolean}[], onChange: Parameters<typeof RadioFormFromRows>[1]) => {
+export const RadioFormFromValues = (values: {text?:string, langPackKey?: LangPackKey, value: number | string, checked?: boolean}[], onChange: Parameters<typeof RadioFormFromRows>[1]) => {
   const name = 'name-' + (Math.random() * 0x7FFFFF | 0);
   let checkedRadioField: RadioField;
-  const rows = values.map(({langPackKey, value, checked}) => {
+  const rows = values.map(({text, langPackKey, value, checked}) => {
     const row = new Row({
       radioField: new RadioField({
+        text,
         langKey: langPackKey,
         name,
         value: '' + value

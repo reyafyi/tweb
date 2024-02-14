@@ -29,6 +29,8 @@ import {AppManagers} from '../lib/appManagers/managers';
 import groupCallsController from '../lib/calls/groupCallsController';
 import StreamManager from '../lib/calls/streamManager';
 import callsController from '../lib/calls/callsController';
+import {rtmpCallsController} from '../lib/calls/rtmpCallsController';
+import {AppMediaViewerRtmp} from './appMediaViewerRtmp';
 
 function convertCallStateToGroupState(state: CALL_STATE, isMuted: boolean) {
   switch(state) {
@@ -87,6 +89,10 @@ export default class TopbarCall {
       }
     });
 
+    listenerSetter.add(rtmpCallsController)('currentCallChanged', (call) => {
+      this.updateInstance(call)
+    });
+
     listenerSetter.add(StreamManager.ANALYSER_LISTENER)('amplitude', ({amplitudes, type}) => {
       const {weave} = this;
       if(!amplitudes.length || !weave/*  || type !== 'input' */) return;
@@ -131,20 +137,28 @@ export default class TopbarCall {
       this.instance = instance;
       this.instanceListenerSetter = new ListenerSetter();
 
-      this.instanceListenerSetter.add(instance as GroupCallInstance)('state', this.onState);
+      if(instance) {
+        if(instance._type !== 'rtmp') {
+          this.instanceListenerSetter.add(instance as GroupCallInstance)('state', this.onState);
+        }
 
-      if(instance instanceof GroupCallInstance) {
-        this.currentDescription = this.groupCallDescription;
-      } else {
-        this.currentDescription = this.callDescription;
-        this.instanceListenerSetter.add(instance)('muted', this.onState);
+        if(instance instanceof GroupCallInstance || instance._type === 'rtmp') {
+          this.currentDescription = this.groupCallDescription;
+        } else {
+          this.currentDescription = this.callDescription;
+          this.instanceListenerSetter.add(instance)('muted', this.onState);
+        }
+
+        this.container.classList.toggle('is-call', !(instance instanceof GroupCallInstance));
       }
-
-      this.container.classList.toggle('is-call', !(instance instanceof GroupCallInstance));
     }
 
-    const isMuted = this.instance.isMuted;
-    const state = instance instanceof GroupCallInstance ? instance.state : convertCallStateToGroupState(instance.connectionState, isMuted);
+    const isMuted = !instance || instance._type === 'rtmp' || this.instance.isMuted;
+    let state
+    if(!instance) state = GROUP_CALL_STATE.CLOSED;
+    else if(instance instanceof GroupCallInstance) state = instance.state;
+    else if(instance._type === 'rtmp') state = GROUP_CALL_STATE.RTMP
+    else state = convertCallStateToGroupState(instance.connectionState, isMuted);
 
     const {weave} = this;
 
@@ -189,16 +203,16 @@ export default class TopbarCall {
     // }
 
     this.setTitle(instance);
-    this.setDescription(instance);
+    this.setDescription(state, instance);
     this.groupCallMicrophoneIconMini.setState(!isMuted);
   }
 
-  private setDescription(instance: TopbarCall['instance']) {
-    return this.currentDescription.update(instance as any);
+  private setDescription(state: GROUP_CALL_STATE, instance: TopbarCall['instance']) {
+    return this.currentDescription.update(state, instance as any);
   }
 
   private setTitle(instance: TopbarCall['instance']) {
-    if(instance instanceof GroupCallInstance) {
+    if(instance instanceof GroupCallInstance || instance._type === 'rtmp') {
       return this.groupCallTitle.update(instance);
     } else {
       replaceContent(this.center, new PeerTitle({peerId: instance.interlocutorUserId.toPeerId()}).element);
@@ -250,7 +264,9 @@ export default class TopbarCall {
         return;
       }
 
-      if(instance instanceof GroupCallInstance) {
+      if(instance._type === 'rtmp') {
+        rtmpCallsController.leaveCall();
+      } else if(instance instanceof GroupCallInstance) {
         instance.hangUp();
       } else {
         instance.hangUp('phoneCallDiscardReasonHangup');
@@ -258,7 +274,9 @@ export default class TopbarCall {
     }, {listenerSetter});
 
     attachClickEvent(container, () => {
-      if(this.instance instanceof GroupCallInstance) {
+      if(this.instance._type === 'rtmp') {
+        AppMediaViewerRtmp.closeActivePip()
+      } else if(this.instance instanceof GroupCallInstance) {
         if(PopupElement.getPopups(PopupGroupCall).length) {
           return;
         }

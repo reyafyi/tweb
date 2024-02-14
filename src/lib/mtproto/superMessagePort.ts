@@ -496,7 +496,7 @@ export default class SuperMessagePort<
     try {
       const listeners = this.listeners[innerTask.type];
       if(!listeners?.length) {
-        throw new Error('no listener');
+        throw new Error(`no listener for ${innerTask.type}`);
       }
 
       const listener = listeners[0];
@@ -592,8 +592,14 @@ export default class SuperMessagePort<
       promise.finally(() => {
         clearInterval(interval);
       });
+      const start = Date.now();
 
       const interval = ctx.setInterval(() => {
+        if(Date.now() - start > 180e3) {
+          // most likely will never finish
+          this.awaiting[task.id].reject(makeError('TASK_TIMEOUT'));
+          delete this.awaiting[task.id];
+        }
         this.log.error('task still has no result', task, port);
       }, 60e3);
     } else if(false) {

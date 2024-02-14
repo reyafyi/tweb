@@ -486,7 +486,7 @@ export default class PopupGroupCall extends PopupElement {
   }
 
   private setDescription() {
-    this.groupCallDescription.update(this.instance);
-    this.groupCallBodyHeaderDescription.update(this.instance);
+    this.groupCallDescription.update(this.instance.state, this.instance);
+    this.groupCallBodyHeaderDescription.update(this.instance.state, this.instance);
   }
 }

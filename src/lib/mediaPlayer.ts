@@ -9,8 +9,8 @@ import {IS_APPLE_MOBILE, IS_MOBILE} from '../environment/userAgent';
 import IS_TOUCH_SUPPORTED from '../environment/touchSupport';
 import cancelEvent from '../helpers/dom/cancelEvent';
 import ListenerSetter, {Listener} from '../helpers/listenerSetter';
-import {ButtonMenuSync} from '../components/buttonMenu';
-import {ButtonMenuToggleHandler} from '../components/buttonMenuToggle';
+import {ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '../components/buttonMenu';
+import ButtonMenuToggle, {ButtonMenuToggleHandler} from '../components/buttonMenuToggle';
 import ControlsHover from '../helpers/dom/controlsHover';
 import {addFullScreenListener, cancelFullScreen, isFullScreen, requestFullScreen} from '../helpers/dom/fullScreen';
 import toHHMMSS from '../helpers/string/toHHMMSS';
@@ -25,20 +25,24 @@ import ButtonIcon from '../components/buttonIcon';
 import Button from '../components/button';
 import Icon from '../components/icon';
 import setCurrentTime from '../helpers/dom/setCurrentTime';
+import {i18n} from './langPack';
 
 export default class VideoPlayer extends ControlsHover {
   private static PLAYBACK_RATES = [0.5, 1, 1.5, 2];
   private static PLAYBACK_RATES_ICONS: Icon[] = ['playback_05', 'playback_1x', 'playback_15', 'playback_2x'];
 
-  protected video: HTMLVideoElement;
+  video: HTMLVideoElement;
   protected wrapper: HTMLDivElement;
   protected progress: MediaProgressLine;
   protected skin: 'default';
+  protected live: boolean;
 
   protected listenerSetter: ListenerSetter;
   protected playbackRateButton: HTMLElement;
   protected pipButton: HTMLElement;
+  protected liveMenuButton: HTMLElement;
   protected toggles: HTMLElement[];
+  liveEl: HTMLElement;
 
   /* protected videoParent: HTMLElement;
   protected videoWhichChild: number; */
@@ -52,6 +56,7 @@ export default class VideoPlayer extends ControlsHover {
     play = false,
     streamable = false,
     duration,
+    live = false,
     onPlaybackRackMenuToggle,
     onPip,
     onPipClose
@@ -60,6 +65,7 @@ export default class VideoPlayer extends ControlsHover {
     play?: boolean,
     streamable?: boolean,
     duration?: number,
+    live?: boolean,
     onPlaybackRackMenuToggle?: VideoPlayer['onPlaybackRackMenuToggle'],
     onPip?: VideoPlayer['onPip'],
     onPipClose?: VideoPlayer['onPipClose']
@@ -69,6 +75,7 @@ export default class VideoPlayer extends ControlsHover {
     this.video = video;
     this.wrapper = document.createElement('div');
     this.wrapper.classList.add('ckin__player');
+    this.live = live;
 
     this.onPlaybackRackMenuToggle = onPlaybackRackMenuToggle;
     this.onPip = onPip;
@@ -80,7 +87,7 @@ export default class VideoPlayer extends ControlsHover {
       element: this.wrapper,
       listenerSetter: this.listenerSetter,
       canHideControls: () => {
-        return !this.video.paused && (!this.playbackRateButton || !this.playbackRateButton.classList.contains('menu-open'));
+        return !this.video.paused && !live && (!this.playbackRateButton || !this.playbackRateButton.classList.contains('menu-open'));
       },
       showOnLeaveToClassName: 'media-viewer-caption',
       ignoreClickClassName: 'ckin__controls'
@@ -96,20 +103,22 @@ export default class VideoPlayer extends ControlsHover {
 
     if(this.skin === 'default') {
       const controls = this.wrapper.querySelector('.default__controls.ckin__controls') as HTMLDivElement;
-      this.progress = new MediaProgressLine({
-        onSeekStart: () => {
-          this.wrapper.classList.add('is-seeking');
-        },
-        onSeekEnd: () => {
-          this.wrapper.classList.remove('is-seeking');
-        }
-      });
-      this.progress.setMedia({
-        media: video,
-        streamable,
-        duration
-      });
-      controls.prepend(this.progress.container);
+      if(!live) {
+        this.progress = new MediaProgressLine({
+          onSeekStart: () => {
+            this.wrapper.classList.add('is-seeking');
+          },
+          onSeekEnd: () => {
+            this.wrapper.classList.remove('is-seeking');
+          }
+        });
+        this.progress.setMedia({
+          media: video,
+          streamable,
+          duration
+        });
+        controls.prepend(this.progress.container);
+      }
     }
 
     if(play/*  && video.paused */) {
@@ -124,6 +133,10 @@ export default class VideoPlayer extends ControlsHover {
         this.setIsPlaing(!this.video.paused);
       });
     }
+
+    if(live) {
+      this.lockControls(true)
+    }
   }
 
   private setIsPlaing(isPlaying: boolean) {
@@ -134,9 +147,10 @@ export default class VideoPlayer extends ControlsHover {
   }
 
   private stylePlayer(initDuration: number) {
-    const {wrapper, video, skin, listenerSetter} = this;
+    const {wrapper, video, skin, listenerSetter, live} = this;
 
     wrapper.classList.add(skin);
+    if(live) wrapper.classList.add(`${skin}-live`);
 
     const html = this.buildControls();
     wrapper.insertAdjacentHTML('beforeend', html);
@@ -147,21 +161,28 @@ export default class VideoPlayer extends ControlsHover {
       wrapper.firstElementChild.after(mainToggle);
 
       const leftControls = wrapper.querySelector('.left-controls') as HTMLElement;
-      const leftToggle = ButtonIcon(` ${skin}__button toggle`, {noRipple: true});
-      leftControls.prepend(leftToggle);
+      if(live) {
+        this.toggles = []
+      } else {
+        const leftToggle = ButtonIcon(` ${skin}__button toggle`, {noRipple: true});
+        leftControls.prepend(leftToggle);
+        this.toggles = [leftToggle];
+      }
 
       const rightControls = wrapper.querySelector('.right-controls') as HTMLElement;
-      this.playbackRateButton = ButtonIcon(` ${skin}__button btn-menu-toggle night`, {noRipple: true});
+      if(!live) {
+        this.playbackRateButton = ButtonIcon(` ${skin}__button btn-menu-toggle night`, {noRipple: true});
+      }
       if(!IS_MOBILE && document.pictureInPictureEnabled) {
         this.pipButton = ButtonIcon(`pip ${skin}__button`, {noRipple: true});
       }
       const fullScreenButton = ButtonIcon(` ${skin}__button`, {noRipple: true});
       rightControls.append(...[this.playbackRateButton, this.pipButton, fullScreenButton].filter(Boolean));
 
-      const toggles = this.toggles = [leftToggle];
+      const toggles = this.toggles;
       const timeElapsed = wrapper.querySelector('#time-elapsed');
       timeDuration = wrapper.querySelector('#time-duration') as HTMLElement;
-      timeDuration.textContent = toHHMMSS(video.duration | 0);
+      if(timeDuration) timeDuration.textContent = toHHMMSS(video.duration | 0);
 
       const volumeSelector = new VolumeSelector(listenerSetter);
 
@@ -176,7 +197,7 @@ export default class VideoPlayer extends ControlsHover {
 
       if(this.pipButton) {
         attachClickEvent(this.pipButton, () => {
-          this.video.requestPictureInPicture();
+          this.video.requestPictureInPicture()
         }, {listenerSetter: this.listenerSetter});
 
         const onPip = (pip: boolean) => {
@@ -190,9 +211,12 @@ export default class VideoPlayer extends ControlsHover {
         const debouncedPip = debounce(onPip, debounceTime, false, true);
 
         listenerSetter.add(video)('enterpictureinpicture', () => {
+          this._inPip = true;
           debouncedPip(true);
 
           listenerSetter.add(video)('leavepictureinpicture', () => {
+            this._inPip = false;
+
             const onPause = () => {
               clearTimeout(timeout);
               if(this.onPipClose) {
@@ -208,13 +232,16 @@ export default class VideoPlayer extends ControlsHover {
 
         listenerSetter.add(video)('leavepictureinpicture', () => {
           debouncedPip(false);
+          this._inPip = false;
         });
       }
 
       if(!IS_TOUCH_SUPPORTED) {
-        attachClickEvent(video, () => {
-          this.togglePlay();
-        }, {listenerSetter: this.listenerSetter});
+        if(!live) {
+          attachClickEvent(video, () => {
+            this.togglePlay();
+          }, {listenerSetter: this.listenerSetter});
+        }
 
         listenerSetter.add(document)('keydown', (e: KeyboardEvent) => {
           if(overlayCounter.overlaysActive > 1 || document.pictureInPictureElement === video) { // forward popup is active, etc
@@ -228,9 +255,9 @@ export default class VideoPlayer extends ControlsHover {
             this.toggleFullScreen();
           } else if(code === 'KeyM') {
             appMediaPlaybackController.muted = !appMediaPlaybackController.muted;
-          } else if(code === 'Space') {
+          } else if(code === 'Space' && !live) {
             this.togglePlay();
-          } else if(e.altKey && (code === 'Equal' || code === 'Minus')) {
+          } else if(e.altKey && (code === 'Equal' || code === 'Minus') && !live) {
             const add = code === 'Equal' ? 1 : -1;
             const playbackRate = appMediaPlaybackController.playbackRate;
             const idx = VideoPlayer.PLAYBACK_RATES.indexOf(playbackRate);
@@ -238,7 +265,7 @@ export default class VideoPlayer extends ControlsHover {
             if(nextIdx >= 0 && nextIdx < VideoPlayer.PLAYBACK_RATES.length) {
               appMediaPlaybackController.playbackRate = VideoPlayer.PLAYBACK_RATES[nextIdx];
             }
-          } else if(wrapper.classList.contains('ckin__fullscreen') && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+          } else if(wrapper.classList.contains('ckin__fullscreen') && (key === 'ArrowLeft' || key === 'ArrowRight') && !live) {
             if(key === 'ArrowLeft') appMediaPlaybackController.seekBackward({action: 'seekbackward'});
             else appMediaPlaybackController.seekForward({action: 'seekforward'});
           } else {
@@ -265,16 +292,22 @@ export default class VideoPlayer extends ControlsHover {
       addFullScreenListener(wrapper, this.onFullScreen.bind(this, fullScreenButton), listenerSetter);
       this.onFullScreen(fullScreenButton);
 
-      listenerSetter.add(video)('timeupdate', () => {
-        timeElapsed.textContent = toHHMMSS(video.currentTime | 0);
-      });
+      if(live) {
+
+      } else {
+        listenerSetter.add(video)('timeupdate', () => {
+          timeElapsed.textContent = toHHMMSS(video.currentTime | 0);
+        });
+      }
 
       listenerSetter.add(video)('play', () => {
         wrapper.classList.add('played');
 
         if(!IS_TOUCH_SUPPORTED) {
           listenerSetter.add(video)('play', () => {
-            this.hideControls(true);
+            if(!live) {
+              this.hideControls(true);
+            }
           });
         }
       }, {once: true});
@@ -286,22 +319,32 @@ export default class VideoPlayer extends ControlsHover {
       listenerSetter.add(appMediaPlaybackController)('playbackParams', () => {
         this.setPlaybackRateIcon();
       });
+
+      if(live) {
+        this.liveEl = i18n('Rtmp.MediaViewer.Live')
+        this.liveEl.classList.add('controls-live');
+        leftControls.prepend(this.liveEl);
+      }
     }
 
     listenerSetter.add(video)('play', () => {
       this.setIsPlaing(true);
     });
 
-    listenerSetter.add(video)('pause', () => {
-      this.setIsPlaing(false);
-    });
-
-    if(video.duration || initDuration) {
-      timeDuration.textContent = toHHMMSS(Math.round(video.duration || initDuration));
-    } else {
-      onMediaLoad(video).then(() => {
-        timeDuration.textContent = toHHMMSS(Math.round(video.duration));
+    if(!live) {
+      listenerSetter.add(video)('pause', () => {
+        this.setIsPlaing(false);
       });
+    }
+
+    if(timeDuration) {
+      if(video.duration || initDuration) {
+        timeDuration.textContent = toHHMMSS(Math.round(video.duration || initDuration));
+      } else {
+        onMediaLoad(video).then(() => {
+          timeDuration.textContent = toHHMMSS(Math.round(video.duration));
+        });
+      }
     }
   }
 
@@ -311,16 +354,24 @@ export default class VideoPlayer extends ControlsHover {
 
   private buildControls() {
     const skin = this.skin;
+
     if(skin === 'default') {
+      const time = this.live ? `
+      <span id="time-elapsed"></span>
+      ` : `
+      <time id="time-elapsed">0:00</time>
+      <span> / </span>
+      <time id="time-duration">0:00</time>
+      `
+
+
       return `
-      <div class="${skin}__gradient-bottom ckin__controls"></div>
+      ${!this.live ? `<div class="${skin}__gradient-bottom ckin__controls"></div>` : ''}
       <div class="${skin}__controls ckin__controls">
         <div class="bottom-controls">
           <div class="left-controls">
             <div class="time">
-              <time id="time-elapsed">0:00</time>
-              <span> / </span>
-              <time id="time-duration">0:00</time>
+              ${time}
             </div>
           </div>
           <div class="right-controls"></div>
@@ -330,6 +381,7 @@ export default class VideoPlayer extends ControlsHover {
   }
 
   protected setBtnMenuToggle() {
+    if(!this.playbackRateButton) return
     const buttons = VideoPlayer.PLAYBACK_RATES.map((rate, idx) => {
       const buttonOptions: Parameters<typeof ButtonMenuSync>[0]['buttons'][0] = {
         // icon: VideoPlayer.PLAYBACK_RATES_ICONS[idx],
@@ -357,6 +409,7 @@ export default class VideoPlayer extends ControlsHover {
   }
 
   protected setPlaybackRateIcon() {
+    if(!this.playbackRateButton) return
     const playbackRateButton = this.playbackRateButton;
 
     let idx = VideoPlayer.PLAYBACK_RATES.indexOf(appMediaPlaybackController.playbackRate);
@@ -422,6 +475,10 @@ export default class VideoPlayer extends ControlsHover {
     }
   }
 
+  public dimBackground() {
+    this.wrapper.classList.add('dim-background');
+  }
+
   public setTimestamp(timestamp: number) {
     setCurrentTime(this.video, timestamp);
     this.togglePlay(true);
@@ -430,7 +487,28 @@ export default class VideoPlayer extends ControlsHover {
   public cleanup() {
     super.cleanup();
     this.listenerSetter.removeAll();
-    this.progress.removeListeners();
+    this.progress?.removeListeners();
     this.onPlaybackRackMenuToggle = this.onPip = undefined;
+  }
+
+  setupLiveMenu(buttons: ButtonMenuItemOptionsVerifiable[]) {
+    this.liveMenuButton = ButtonMenuToggle({
+      direction: 'top-left',
+      buttons: buttons,
+      buttonOptions: {
+        noRipple: true
+      }
+    })
+    this.liveMenuButton.classList.add('night');
+    this.wrapper.querySelector('.right-controls').prepend(this.liveMenuButton);
+  }
+
+  updateLiveViewersCount(count: number) {
+    this.wrapper.querySelector('#time-elapsed').textContent = i18n('Rtmp.MediaViewer.Watching', [Math.max(1, count)]).textContent;
+  }
+
+  protected _inPip = false;
+  get inPip() {
+    return this._inPip;
   }
 }

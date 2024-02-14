@@ -41,6 +41,10 @@ export class WeavingState {
     } else if(type === GROUP_CALL_STATE.CONNECTING) {
       gradient.addColorStop(0, '#8599aa');
       gradient.addColorStop(1, '#8599aa');
+    } else if(type === GROUP_CALL_STATE.RTMP) {
+      gradient.addColorStop(0, '#4588E3');
+      gradient.addColorStop(0.5, '#976FFF');
+      gradient.addColorStop(1, '#E46ACE');
     }
 
     return gradient;
@@ -97,7 +101,8 @@ export default class TopbarWeave {
       [GROUP_CALL_STATE.UNMUTED, new WeavingState(GROUP_CALL_STATE.UNMUTED)],
       [GROUP_CALL_STATE.MUTED, new WeavingState(GROUP_CALL_STATE.MUTED)],
       [GROUP_CALL_STATE.MUTED_BY_ADMIN, new WeavingState(GROUP_CALL_STATE.MUTED_BY_ADMIN)],
-      [GROUP_CALL_STATE.CONNECTING, new WeavingState(GROUP_CALL_STATE.CONNECTING)]
+      [GROUP_CALL_STATE.CONNECTING, new WeavingState(GROUP_CALL_STATE.CONNECTING)],
+      [GROUP_CALL_STATE.RTMP, new WeavingState(GROUP_CALL_STATE.RTMP)]
     ]);
     this.previousState = null;
     this.currentState = this.states.get(GROUP_CALL_STATE.CONNECTING);

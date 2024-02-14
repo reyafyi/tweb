@@ -9,7 +9,8 @@ enum GROUP_CALL_STATE {
   MUTED,
   MUTED_BY_ADMIN,
   CONNECTING,
-  CLOSED
+  CLOSED,
+  RTMP,
 }
 
 export default GROUP_CALL_STATE;

@@ -241,6 +241,17 @@
   }
 }
 
+
+.admin-popup-container {
+  transition: opacity var(--transition-standard-in);
+  opacity: 1;
+}
+
+.admin-popup-container.admin-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
 video::-webkit-media-controls-enclosure {
   display: none !important;
 }
@@ -420,5 +431,125 @@ input[type=range] {
 
   @include respond-to(handhelds) {
     height: 3.625rem;
+  }
+}
+
+
+.loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.5) 50%, transparent 100%);
+  animation: rtmp-loading-animation 1.5s infinite cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.loading_bezel-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+
+  border-radius: 10px;
+  @include respond-to(handhelds) {
+    border-radius: 0;
+  }
+  
+  border: 2px solid transparent;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) padding-box, 
+    linear-gradient(#fff 0 0);
+  mask: 
+      linear-gradient(#fff 0 0) padding-box, 
+      linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+
+  .loading {
+      height: calc(100% + 8px);
+      margin-top: -4px;
+  }
+}
+
+.loading-wrap {
+  transition: opacity var(--transition-standard-in);
+  opacity: 0;
+}
+
+.is-loading.loading-wrap {
+  opacity: 1!important;
+}
+
+.default-live {
+  &.dim-background {
+    background: #000;
+  }
+  // video { display: none; }
+  border-radius: 10px;
+
+  @include respond-to(handhelds) {
+    border-radius: 0;
+  }
+
+  video {
+    @include respond-to(handhelds) {
+      border-radius: 0;
+    }
+
+    border-radius: 10px;
+  }
+
+  
+  .bottom-controls {
+    padding: 8px;
+    height: auto;
+  }
+
+  .right-controls {
+    gap: 4px;
+  }
+
+  &.is-buffering .loading-wrap {
+    opacity: 1;
+  }
+
+  .controls-live {
+    background: linear-gradient(75deg, #4588E3 -79.42%, #976FFF 20.35%, #E46ACE 100.03%), #EA3323;
+    display: flex;
+    padding: 4px 7px;
+    justify-content: center;
+    align-items: center;
+    border-radius: 12px;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: normal;
+    transition: filter var(--transition-standard-in);
+    margin: 8px;
+    filter: grayscale(1);
+
+    &.is-not-buffering {
+      filter: none;
+    }
+  }
+
+  .btn-menu-toggle {
+    color: #fff!important;
+  }
+
+  .player-volume {
+    margin: 0 2px;
+  }
+}
+
+@keyframes rtmp-loading-animation {
+  0%, 10% {
+      transform: translateX(-100%);
+  }
+  100% {
+      transform: translateX(100%);
   }
 }

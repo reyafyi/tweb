@@ -8,7 +8,7 @@ import getGroupCallAudioAsset from '../../components/groupCall/getAudioAsset';
 import {MOUNT_CLASS_TO} from '../../config/debug';
 import EventListenerBase from '../../helpers/eventListenerBase';
 import {GroupCallParticipant, GroupCallParticipantVideo, GroupCallParticipantVideoSourceGroup} from '../../layer';
-import {GroupCallId, GroupCallConnectionType} from '../appManagers/appGroupCallsManager';
+import {GroupCallId, GroupCallConnectionType, JoinGroupCallJsonPayload} from '../appManagers/appGroupCallsManager';
 import {AppManagers} from '../appManagers/managers';
 import {logger} from '../logger';
 import rootScope from '../rootScope';

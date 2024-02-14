@@ -94,7 +94,7 @@ declare global {
     `FILE_MIGRATE_${number}` | 'MSG_WAIT_FAILED' | 'MSG_WAIT_TIMEOUT' | 'SAVED_DIALOGS_UNSUPPORTED' |
     'YOUR_PRIVACY_RESTRICTED';
 
-  type ErrorType = LocalErrorType | ServerErrorType;
+  type ErrorType = LocalErrorType | ServerErrorType | (string & {});
 
   type TelegramChoosePeerType = 'users' | 'bots' | 'groups' | 'channels';
 

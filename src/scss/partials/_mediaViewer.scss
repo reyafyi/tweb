@@ -314,7 +314,7 @@ $inactive-opacity: .4;
       object-fit: cover;
       //object-fit: contain;
       opacity: 1;
-      transition: var(--open-duration) opacity;
+      transition: opacity var(--transition-standard-in);
 
       /* border-radius: inherit;
       transition: var(--open-duration) border-radius; */
@@ -323,6 +323,18 @@ $inactive-opacity: .4;
         position: absolute;
         //z-index: -1;
       //}
+    }
+
+    .thumbnail-avatar {
+      user-select: none;
+      opacity: 1;
+      transition: opacity var(--transition-standard-in);
+    }
+
+    .canvas-thumbnail.hide-thumbnail,
+    .thumbnail-avatar.hide-thumbnail {
+      opacity: 0;
+      transition: opacity var(--transition-standard-out)
     }
 
     // !SAFARI
@@ -417,7 +429,8 @@ $inactive-opacity: .4;
     &.hiding {
       img,
       video,
-      .canvas-thumbnail {
+      .canvas-thumbnail,
+      .thumbnail-avatar {
         opacity: 0;
       }
     }
@@ -575,7 +588,8 @@ $inactive-opacity: .4;
 
     &.no-forwards {
       img,
-      .canvas-thumbnail {
+      .canvas-thumbnail,
+      .thumbnail-avatar {
         pointer-events: none;
       }
 
@@ -697,4 +711,64 @@ $inactive-opacity: .4;
   opacity: 0;
   visibility: hidden;
   transition: opacity var(--open-duration) 0s, visibility 0s var(--open-duration);
+}
+
+.media-viewer-whole.live {
+  .media-viewer-topbar {
+    padding: 0 12px;
+  }
+
+  .media-viewer-userpic {
+    margin-right: 18px;
+    --size: 42px;
+  }
+
+  .media-viewer-topbar .btn-icon,
+  .media-viewer-topbar .media-viewer-author {
+    opacity: 1;
+  }
+
+  .media-viewer-author-right {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .media-viewer-name {
+    font-size: 16px;
+    line-height: 21px;
+    margin: 0;
+  }
+  .media-viewer-date {
+    color: rgba(255, 255, 255, 0.50);
+    font-weight: 400;
+    line-height: 20px;
+  }
+
+  .media-viewer-buttons {
+    padding: 8px;
+  }
+
+  .thumbnail-avatar {
+    width: 100%;
+    height: 100%;
+    position: relative;
+  }
+
+  .thumbnail-avatar img {
+    object-fit: cover;
+  }
+
+  .canvas-thumbnail {
+    object-fit: cover;
+    position: relative;
+    border-radius: 10px;
+    @include respond-to(handhelds) {
+      border-radius: 0;
+    }
+  }
+
+  .thumbnail-avatar {
+    border-radius: 10px!important;
+  }
 }

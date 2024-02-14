@@ -7,6 +7,7 @@
 import setInnerHTML from '../../helpers/dom/setInnerHTML';
 import {GroupCall} from '../../layer';
 import GroupCallInstance from '../../lib/calls/groupCallInstance';
+import {RtmpCallInfo} from '../../lib/calls/rtmpCallsController';
 import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
 import PeerTitle from '../peerTitle';
 
@@ -17,7 +18,18 @@ export default class GroupCallTitleElement {
     this.peerTitle = new PeerTitle({peerId: 0});
   }
 
-  public update(instance: GroupCallInstance) {
+  public update(instance: GroupCallInstance | RtmpCallInfo) {
+    if('_type' in instance) {
+      const peerId = instance.peerId;
+      this.peerTitle.options.peerId = peerId;
+      this.peerTitle.update();
+
+      if(this.peerTitle.element.parentElement !== this.appendTo) {
+        this.appendTo.append(this.peerTitle.element);
+      }
+      return
+    }
+
     const {peerTitle, appendTo} = this;
     const groupCall = instance.groupCall as GroupCall.groupCall;
     const peerId = instance.chatId.toPeerId(true);

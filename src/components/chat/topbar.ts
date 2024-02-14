@@ -6,6 +6,7 @@
 
 import type {Channel} from '../../lib/appManagers/appChatsManager';
 import type {AppSidebarRight} from '../sidebarRight';
+import {render} from 'solid-js/web'
 import type Chat from './chat';
 import {RIGHT_COLUMN_ACTIVE_CLASSNAME} from '../sidebarRight';
 import mediaSizes, {ScreenSize} from '../../helpers/mediaSizes';
@@ -59,6 +60,9 @@ import PopupBoostsViaGifts from '../popups/boostsViaGifts';
 import AppStatisticsTab from '../sidebarRight/tabs/statistics';
 import {ChatType} from './chat';
 import AppBoostsTab from '../sidebarRight/tabs/boosts';
+import {TopbarLiveContainer} from './topbarLive/container';
+import {rtmpCallsController} from '../../lib/calls/rtmpCallsController';
+import {RtmpStartStreamPopup} from '../groupCall/rtmp/adminPopup';
 import {appState} from '../../stores/appState';
 
 type ButtonToVerify = {element?: HTMLElement, verify: () => boolean | Promise<boolean>};
@@ -79,6 +83,7 @@ export default class ChatTopbar {
   private btnPinned: HTMLButtonElement;
   private btnCall: HTMLButtonElement;
   private btnGroupCall: HTMLButtonElement;
+  private btnGroupCallMenu: HTMLElement;
   private btnMute: HTMLButtonElement;
   private btnSearch: HTMLButtonElement;
   private btnMore: HTMLElement;
@@ -87,6 +92,9 @@ export default class ChatTopbar {
   private chatRequests: ChatRequests;
   private chatAudio: ChatAudio;
   public pinnedMessage: ChatPinnedMessage;
+
+  private groupCallContainer: HTMLDivElement;
+  private groupCallDispose: () => void;
 
   private setUtilsRAF: number;
 
@@ -164,6 +172,11 @@ export default class ChatTopbar {
     this.chatRequests = new ChatRequests(this, this.chat, this.managers);
     this.chatActions = new ChatActions(this, this.chat, this.managers);
 
+    this.groupCallContainer = document.createElement('div');
+    this.groupCallContainer.classList.add('pinned-container', 'is-floating', 'topbar-live-container');
+    this.groupCallDispose = render(TopbarLiveContainer, this.groupCallContainer);
+    this.container.append(this.groupCallContainer);
+
     if(this.menuButtons.length) {
       this.btnMore = ButtonMenuToggle({
         listenerSetter: this.listenerSetter,
@@ -186,13 +199,15 @@ export default class ChatTopbar {
       this.btnPinned,
       this.btnCall,
       this.btnGroupCall,
+      this.btnGroupCallMenu,
       this.btnMute,
       this.btnSearch,
       this.btnMore
     ].filter(Boolean));
 
     this.pushButtonToVerify(this.btnCall, this.verifyCallButton.bind(this, 'voice'));
-    this.pushButtonToVerify(this.btnGroupCall, this.verifyVideoChatButton);
+    this.pushButtonToVerify(this.btnGroupCall, this.verifyVideoChatButton.bind(this, 'nonadmin'));
+    this.pushButtonToVerify(this.btnGroupCallMenu, this.verifyVideoChatButton.bind(this, 'admin'));
 
     this.chatInfoContainer.append(this.btnBack, this.chatInfo, this.chatUtils);
     this.container.append(this.chatInfoContainer);
@@ -322,7 +337,7 @@ export default class ChatTopbar {
     r();
   };
 
-  private verifyVideoChatButton = async(type?: 'group' | 'broadcast') => {
+  private verifyVideoChatButton = async(type?: 'group' | 'broadcast' | 'admin' | 'nonadmin') => {
     if(!IS_GROUP_CALL_SUPPORTED || this.peerId.isUser() || this.chat.type !== ChatType.Chat || this.chat.threadId) return false;
 
     const currentGroupCall = groupCallsController.groupCall;
@@ -332,14 +347,23 @@ export default class ChatTopbar {
     }
 
     if(type) {
-      if(((await this.managers.appPeersManager.isBroadcast(this.peerId)) && type === 'group') ||
-        ((await this.managers.appPeersManager.isAnyGroup(this.peerId)) && type === 'broadcast')) {
+      if(((type === 'group' && await this.managers.appPeersManager.isBroadcast(this.peerId))) ||
+        ((type === 'broadcast' && await this.managers.appPeersManager.isAnyGroup(this.peerId)))) {
         return false;
       }
     }
 
     const chat = apiManagerProxy.getChat(chatId);
-    return (chat as MTChat.chat).pFlags?.call_active || hasRights(chat, 'manage_call');
+    if(hasRights(chat, 'manage_call')) {
+      if(type === 'admin') return !(chat as MTChat.chat).pFlags?.call_active
+    }
+    if(!(chat as MTChat.chat).pFlags?.call_active) return false
+
+    const fullChat = await this.managers.appProfileManager.getChatFull(chatId);
+    const groupCall = await this.managers.appGroupCallsManager.getGroupCallFull(fullChat.call.id);
+    if(groupCall?._ !== 'groupCall') return false
+
+    return !groupCall.pFlags.rtmp_stream
   };
 
   private verifyCallButton = async(type?: CallType) => {
@@ -654,6 +678,28 @@ export default class ChatTopbar {
     this.btnJoin = Button('btn-primary btn-color-primary chat-join hide');
     this.btnCall = ButtonIcon('phone');
     this.btnGroupCall = ButtonIcon('videochat');
+    this.btnGroupCallMenu = ButtonMenuToggle({
+      listenerSetter: this.listenerSetter,
+      direction: 'bottom-left',
+      buttons: [
+        {
+          icon: 'videochat',
+          text: 'Rtmp.Topbar.StartVideoChat',
+          onClick: this.onJoinGroupCallClick
+        },
+        {
+          icon: 'link',
+          text: 'Rtmp.Topbar.StreamWith',
+          onClick: () => {
+            PopupElement.createPopup(RtmpStartStreamPopup, {peerId: this.peerId}).show()
+          }
+        }
+      ],
+      onOpen: async(e, element) => {
+        console.log('onOpen');
+      },
+      icon: 'videochat'
+    });
     this.btnPinned = ButtonIcon('pinlist chat-pinlist');
     this.btnMute = ButtonIcon('mute');
 
@@ -710,6 +756,7 @@ export default class ChatTopbar {
         const chat = apiManagerProxy.getChat(chatId) as Channel/*  | Chat */;
 
         this.btnJoin.classList.toggle('hide', !(chat as Channel)?.pFlags?.left);
+        this.groupCallContainer.classList.toggle('hide', !(chat?._ === 'channel' && chat.pFlags.call_active && chat.pFlags.call_not_empty));
         this.setUtilsWidth();
         this.verifyButtons();
       }
@@ -758,6 +805,9 @@ export default class ChatTopbar {
     this.chat.addEventListener('setPeer', (mid, isTopMessage) => {
       const middleware = this.chat.bubbles.getMiddleware();
       apiManagerProxy.getState().then((state) => {
+        const mtChat = apiManagerProxy.getChat(this.chat.peerId)
+        this.groupCallContainer.classList.toggle('hide', !(mtChat?._ === 'channel' && mtChat.pFlags.call_active && mtChat.pFlags.call_not_empty));
+
         if(!middleware() || !this.pinnedMessage) return;
 
         this.pinnedMessage.hidden = !!state.hiddenPinnedMessages[this.chat.peerId];
@@ -771,6 +821,10 @@ export default class ChatTopbar {
         }
       });
     });
+
+    this.listenerSetter.add(rtmpCallsController)('currentCallChanged', (call) => {
+      this.groupCallContainer.classList.toggle('hide', call !== null);
+    })
 
     this.listenerSetter.add(rootScope)('peer_pinned_messages', ({peerId, mids}) => {
       if(this.chat.type !== ChatType.Pinned || peerId !== this.peerId) {
@@ -825,6 +879,8 @@ export default class ChatTopbar {
     this.chatAudio?.destroy();
     this.chatRequests?.destroy();
     this.chatActions?.destroy();
+
+    this.groupCallDispose();
 
     delete this.pinnedMessage;
     delete this.chatAudio;
