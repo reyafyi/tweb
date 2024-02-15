@@ -756,7 +756,7 @@ export default class ChatTopbar {
         const chat = apiManagerProxy.getChat(chatId) as Channel/*  | Chat */;
 
         this.btnJoin.classList.toggle('hide', !(chat as Channel)?.pFlags?.left);
-        this.groupCallContainer.classList.toggle('hide', !(chat?._ === 'channel' && chat.pFlags.call_active && chat.pFlags.call_not_empty));
+        this.groupCallContainer.classList.toggle('hide', rtmpCallsController.currentCall != null || !(chat?._ === 'channel' && chat.pFlags.call_active && chat.pFlags.call_not_empty));
         this.setUtilsWidth();
         this.verifyButtons();
       }
