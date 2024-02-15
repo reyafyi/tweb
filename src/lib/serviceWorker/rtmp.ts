@@ -38,7 +38,8 @@ function scaleToTime(scale: number) {
 
 interface BufferedChunk {
   time: bigInt.BigInteger
-  seq: number
+  seq?: number
+  iso?: any
   segment?: Uint8Array
 }
 type HlsWaiter = (chunk?: Uint8Array) => void
@@ -81,17 +82,51 @@ class RtmpStream {
     this._decodeOpus = this._decodeOpus.bind(this)
   }
 
-  private async _fetchChunk(time: bigInt.BigInteger, seq: number) {
+  private _rtts: number[] = []
+  private _updateRtt(rtt: number) {
+    this._rtts.push(rtt)
+    if(this._rtts.length > 10) {
+      this._rtts.shift()
+    }
+  }
+
+  private _maybeAdjustBufferSize() {
+    const avgRtt = this._rtts.reduce((a, b) => a + b, 0) / this._rtts.length
+    const targetBufferSize = Math.ceil(Math.max(BUFFER_MS, avgRtt * 3) / this._chunkTime)
+
+    log(`avg rtt=${avgRtt} target buffer size=${targetBufferSize}`, this.call.id)
+
+    if(targetBufferSize !== this._bufferSize) {
+      const diff = Math.abs(targetBufferSize - this._bufferSize)
+      this._cutoff = this._cutoff.minus(this._chunkTime * diff)
+      this._bufferSize = targetBufferSize
+      log(`adjusted buffer size to ${targetBufferSize}`, this.call.id)
+    }
+  }
+
+  private async _processChunk(iso: any, seq: number) {
+    if(!iso) return new Uint8Array(0)
+    return generateFmp4Segment({
+      chunk: iso,
+      seq: seq,
+      timestamp: bigInt(seq).multiply(this._chunkTime),
+      opusTrackId: this._initChunk.opusTrackId,
+      decodeOpus: IS_SAFARI && this._decodeOpus
+    })
+  }
+
+  private async _fetchChunk(time: bigInt.BigInteger) {
     if(time.isNegative()) {
       // chunk does not exist (e.g. stream has just started)
-      return new Uint8Array(0);
+      return null;
     }
     if(time.lesserOrEquals(this._lastTime)) {
       // this chunk was already fetched, likely due to resync
-      return new Uint8Array(0);
+      return null;
     }
 
-    log('starting fetch', this.call.id, time.toString())
+    log(`starting fetch call=${this.call.id} time=${time}`)
+    const now = Date.now()
     const chunk = await serviceMessagePort.invoke('requestRtmpPart', {
       dcId: this._dcId,
       request: {
@@ -103,6 +138,8 @@ class RtmpStream {
         video_quality: RTMP_UNIFIED_QUALITY
       }
     })
+    this._updateRtt(Date.now() - now)
+    log(`ended fetch call=${this.call.id} time=${time}`)
 
     if(chunk._ !== 'upload.file') {
       throw new Error('Invalid file');
@@ -116,9 +153,8 @@ class RtmpStream {
       throw new Error('Invalid container');
     }
 
-    // todo avoid copies
     const iso = ISOBoxer.parseBuffer(chunk.bytes.slice(info.contentOffset).buffer);
-    const isInitChunk = this._initChunk === undefined;
+
     if(!this._initChunk) {
       this._initChunk = generateFmp4Init(iso, {
         opusToFlac: IS_SAFARI
@@ -126,17 +162,10 @@ class RtmpStream {
       if(this._initChunk.opusInitOptions) {
         await this._initOpusDecoder()
       }
+      this._retryCount = 0
     }
-    const segment = await generateFmp4Segment({
-      chunk: iso,
-      seq: seq,
-      timestamp: bigInt(seq).multiply(this._chunkTime),
-      opusTrackId: this._initChunk.opusTrackId,
-      decodeOpus: IS_SAFARI && this._decodeOpus
-    })
-    log(`ended fetch call=${this.call.id} time=${time} seq=${seq}`)
-    if(isInitChunk) this._retryCount = 0
-    return segment
+
+    return iso;
   }
 
   private _decoderInitPromise?: Promise<void>
@@ -215,13 +244,12 @@ class RtmpStream {
 
     for(let i = 1; i <= chunksToFetch; i++) {
       const nextTime = lastBufferedChunkTime.add(this._chunkTime * i);
-      const nextSeq = this._lastChunkSeq++
-      const chunk: BufferedChunk = {time: nextTime, seq: nextSeq}
+      const chunk: BufferedChunk = {time: nextTime}
       this._buffer.push(chunk);
 
       tasks.push((async() => {
         try {
-          chunk.segment = await this._fetchChunk(nextTime, nextSeq);
+          chunk.iso = await this._fetchChunk(nextTime);
         } catch(e: any) {
           if(e.type === 'TIME_TOO_BIG') {
             isAhead = true
@@ -250,7 +278,7 @@ class RtmpStream {
       log(`rtmp stream too far ahead ${this.call.id} next_time=${aheadMinTime}`)
       this._isAhead = true;
       this._time = aheadMinTime;
-      this._cutoff = aheadMinTime.minus(BUFFER_MS);
+      this._cutoff = aheadMinTime.minus(this._chunkTime * this._bufferSize);
       this._pendingReplenish = false;
       this._lastChunkSeq = lastSeq
 
@@ -263,6 +291,8 @@ class RtmpStream {
       this._notifyTime()
       return;
     }
+
+    this._maybeAdjustBufferSize()
 
     // remove any chunks that are now too old
     newChunks = newChunks.filter(it => it.time.geq(this._cutoff))
@@ -284,8 +314,13 @@ class RtmpStream {
 
       // notify pending chunks
       for(const chunk of newChunks) {
-        const waiters = this._hlsWaitingForChunk.get(chunk.seq) || [];
-        this._hlsWaitingForChunk.delete(chunk.seq);
+        const seq = this._lastChunkSeq++;
+        chunk.seq = seq;
+        chunk.segment = await this._processChunk(chunk.iso, seq);
+
+        const waiters = this._hlsWaitingForChunk.get(seq) || [];
+        this._hlsWaitingForChunk.delete(seq);
+        log(`sending chunk to waiters call=${this.call.id} time=${chunk.time} seq=${chunk.seq}`)
 
         for(const waiter of waiters) {
           waiter(chunk.segment);
@@ -293,9 +328,14 @@ class RtmpStream {
       }
     } else {
       // notify active controllers
-      for(const controller of this._controllers) {
-        for(const chunk of newChunks) {
-          log(`sending chunk to controller call=${this.call.id} time=${chunk.time} seq=${chunk.seq}`)
+
+      for(const chunk of newChunks) {
+        const seq = this._lastChunkSeq++;
+        chunk.seq = seq;
+        chunk.segment = await this._processChunk(chunk.iso, seq);
+        log(`sending chunk to controller call=${this.call.id} time=${chunk.time} seq=${chunk.seq}`)
+
+        for(const controller of this._controllers) {
           controller.enqueue(chunk.segment);
         }
       }
@@ -543,13 +583,11 @@ class RtmpStream {
     }
     this._timeout = setTimeout(this._onHlsTimeout, HLS_TIMEOUT);
 
-    if(this._generation === 0) {
-      this.start();
-    }
-
-    if(this._hasEnoughBuffer()) {
+    if(this._generation !== 0) {
       return this._generateHlsPlaylist(baseUrl);
     }
+
+    this.start();
 
     return new Promise<string>((resolve) => {
       const reject = (err: unknown) => {
