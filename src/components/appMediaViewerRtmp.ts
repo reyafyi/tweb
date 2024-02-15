@@ -15,6 +15,7 @@ import PopupElement from './popups';
 import SetTransition from './singleTransition';
 import {toastNew} from './toast';
 
+const REJOIN_INTERVAL = 15000
 
 export class AppMediaViewerRtmp extends AppMediaViewerBase<never, 'forward', never> {
   static activeInstance: AppMediaViewerRtmp | null = null
@@ -24,6 +25,7 @@ export class AppMediaViewerRtmp extends AppMediaViewerBase<never, 'forward', nev
   private _peerId: PeerId
   private _listenerSetter = new ListenerSetter()
   private _retryTimeout?: NodeJS.Timeout
+  private _rejoinInterval?: NodeJS.Timeout
   constructor() {
     super(new ListLoader({
       loadMore: async() => {
@@ -180,6 +182,18 @@ export class AppMediaViewerRtmp extends AppMediaViewerBase<never, 'forward', nev
 
       this.videoPlayer?.updateLiveViewersCount(call.call.participants_count)
     })
+
+    this._rejoinInterval = setTimeout(this._rejoin, REJOIN_INTERVAL)
+  }
+
+  private _rejoin = () => {
+    if(rtmpCallsController.currentCall) {
+      rtmpCallsController.rejoinCall().catch((err) => {
+        console.error('rejoinCall', err)
+      }).then(() => {
+        this._rejoinInterval = setTimeout(this._rejoin, REJOIN_INTERVAL)
+      })
+    }
   }
 
   protected toggleAdminPanel(visible: boolean) {
@@ -302,6 +316,7 @@ export class AppMediaViewerRtmp extends AppMediaViewerBase<never, 'forward', nev
       } catch(e) {}
     }
     clearTimeout(this._retryTimeout);
+    clearTimeout(this._rejoinInterval);
 
     super.close(e)
     AppMediaViewerRtmp.activeInstance = null
