@@ -11,13 +11,16 @@ import {IS_SAFARI} from '../../environment/userAgent';
 import type {OpusDecodedAudio} from '../../vendor/opus';
 import {OpusDecoder} from '../../vendor/opus';
 import {notifyAll} from '../../helpers/context';
+import deferredPromise from '../../helpers/cancellablePromise';
+import type {GroupCallRtmpState} from '../appManagers/appGroupCallsManager';
 
 const pendingStreams: Map<string, RtmpStream> = new Map();
-// сафари воистину конченный браузер - перезагружает плейлист даже после ENDLIST
+// сафари прекрасный браузер - перезагружает плейлист даже после ENDLIST
 // костыль чтобы не было проблем с перезагрузкой мертвого стрима
 const lastKnownTime = new Map<Long, bigInt.BigInteger>();
 
 const BUFFER_MS = 5000;
+const OFFSET_MS = 1000;
 
 // seconds to consider stream to be still alive when using hls
 // (since the last time manifest was requested)
@@ -34,8 +37,6 @@ function scaleToTime(scale: number) {
   return 1000 >> scale;
 }
 
-// todo pings with page to keep alive because apparently handling stream end isnt enough?
-
 interface BufferedChunk {
   time: bigInt.BigInteger
   seq?: number
@@ -49,11 +50,11 @@ class RtmpStream {
   private _retryCount = 0
   private _destroyed = false
 
-
   private _controllers = new Set<ReadableStreamDefaultController<Uint8Array>>();
   private _waitingForBuffer = new Set<ReadableStreamDefaultController<Uint8Array>>();
 
-  private _timeout?: NodeJS.Timeout
+  private _deadTimeout?: NodeJS.Timeout
+  private _timeouts = new Set<NodeJS.Timeout>()
 
   private _hlsWaitingForBuffer: HlsWaiter[] = []
   private _hlsWaitingForChunk = new Map<number, HlsWaiter[]>()
@@ -91,6 +92,8 @@ class RtmpStream {
   }
 
   private _maybeAdjustBufferSize() {
+    if(this._rtts.length < 3) return
+
     const avgRtt = this._rtts.reduce((a, b) => a + b, 0) / this._rtts.length
     const targetBufferSize = Math.ceil(Math.max(BUFFER_MS, avgRtt * 3) / this._chunkTime)
 
@@ -236,7 +239,6 @@ class RtmpStream {
     const lastBufferedChunkTime = this._buffer.length ?
       this._buffer[this._buffer.length - 1].time :
       this._cutoff;
-    const lastSeq = this._lastChunkSeq;
 
     const tasks: Promise<BufferedChunk>[] = [];
     let isAhead = false;
@@ -274,13 +276,14 @@ class RtmpStream {
       return;
     }
 
+    this._maybeAdjustBufferSize()
+
     if(isAhead) {
       log(`rtmp stream too far ahead ${this.call.id} next_time=${aheadMinTime}`)
       this._isAhead = true;
-      this._time = aheadMinTime;
-      this._cutoff = aheadMinTime.minus(this._chunkTime * this._bufferSize);
+      this._time = aheadMinTime.add(this._chunkTime);
+      this._cutoff = this._time.minus(this._chunkTime * this._bufferSize);
       this._pendingReplenish = false;
-      this._lastChunkSeq = lastSeq
 
       // remove the empty "ahead" chunks
       const aheadIdx = this._buffer.findIndex(it => it.time.geq(aheadMinTime))
@@ -292,7 +295,6 @@ class RtmpStream {
       return;
     }
 
-    this._maybeAdjustBufferSize()
 
     // remove any chunks that are now too old
     newChunks = newChunks.filter(it => it.time.geq(this._cutoff))
@@ -352,6 +354,42 @@ class RtmpStream {
     this._pendingReplenish = false;
   }
 
+  private async _fetchState() {
+    const promise = deferredPromise<GroupCallRtmpState>()
+    let retries = 0
+    let timeout: NodeJS.Timeout
+
+    const retry = () => {
+      if(retries > 3) {
+        promise.reject(new Error('Failed to fetch state'))
+        return
+      }
+
+      if(timeout) {
+        clearTimeout(timeout)
+        this._timeouts.delete(timeout)
+      }
+
+      timeout = setTimeout(() => {
+        retries++
+        retry()
+      }, 5000)
+      this._timeouts.add(timeout)
+
+      serviceMessagePort.invoke('requestRtmpState', this.call).then((state) => {
+        clearTimeout(timeout)
+        promise.resolve(state)
+      }).catch((e) => {
+        retries++
+        retry()
+      })
+    }
+
+    retry()
+
+    return promise
+  }
+
   private async _start(): Promise<void> {
     log(`starting rtmp stream ${this.call.id} generation ${this._generation} -> ${this._generation + 1}`)
     clearInterval(this._clock)
@@ -362,26 +400,16 @@ class RtmpStream {
     this._isAhead = false
     this._generation += 1
 
-    const state = await serviceMessagePort.invoke('requestRtmpState', this.call);
+    const state = await this._fetchState();
     if(this._destroyed) return;
-    // if(!state.channels.length && this._retryCount <= 3) {
-    //   log('retrying rtmp stream (no channels found)', this.call.id)
-    //   this._retryCount += 1
-    //   return this._start()
-    // }
 
     const channel = state.channels.find(channel => channel.channel === RTMP_UNIFIED_CHANNEL_ID);
     if(!channel) {
-      // if(this._retryCount <= 3) {
-      //   log('retrying rtmp stream (no unified channel found)', this.call.id)
-      //   this._retryCount += 1
-      //   return this._start()
-      // }
       throw new Error('No unified channel found');
     }
 
     log(`rtmp stream started, last_ts=${channel.last_timestamp_ms}, scale=${channel.scale}`)
-    this._time = bigInt(channel.last_timestamp_ms as number);
+    this._time = bigInt(channel.last_timestamp_ms as number).minus(OFFSET_MS);
     if(IS_SAFARI) {
       const lastKnown = lastKnownTime.get(this.call.id);
       if(lastKnown && lastKnown.gt(this._time)) {
@@ -475,7 +503,10 @@ class RtmpStream {
     log('destroying rtmp stream', this.call.id, error)
     pendingStreams.delete(this.call.id as string);
     clearInterval(this._clock);
-    clearTimeout(this._timeout);
+    clearTimeout(this._deadTimeout);
+    for(const timeout of this._timeouts) {
+      clearTimeout(timeout);
+    }
     if(this._opusDecoder !== undefined) {
       this._opusDecoder.free()
     }
@@ -511,8 +542,8 @@ class RtmpStream {
           this.start();
         }
 
-        if(this._timeout) {
-          clearTimeout(this._timeout);
+        if(this._deadTimeout) {
+          clearTimeout(this._deadTimeout);
         }
 
         if(this._hasEnoughBuffer()) {
@@ -529,7 +560,7 @@ class RtmpStream {
         this._waitingForBuffer.delete(controller_);
 
         if(!this._controllers.size) {
-          this._timeout = setTimeout(() => {
+          this._deadTimeout = setTimeout(() => {
             this.destroy();
           }, STREAM_TIMEOUT);
         }
@@ -567,7 +598,7 @@ class RtmpStream {
     log('hls playlist refetch timeout', this.call.id)
     if(this._hlsWaitingForBuffer.length || this._hlsWaitingForChunk.size) {
       log('still active (some fetch is pending)')
-      this._timeout = setTimeout(this._onHlsTimeout, HLS_TIMEOUT);
+      this._deadTimeout = setTimeout(this._onHlsTimeout, HLS_TIMEOUT);
       return
     }
 
@@ -578,10 +609,10 @@ class RtmpStream {
   async getHlsPlaylist(baseUrl: string): Promise<string> {
     log('getting hls playlist', this.call.id)
 
-    if(this._timeout) {
-      clearTimeout(this._timeout);
+    if(this._deadTimeout) {
+      clearTimeout(this._deadTimeout);
     }
-    this._timeout = setTimeout(this._onHlsTimeout, HLS_TIMEOUT);
+    this._deadTimeout = setTimeout(this._onHlsTimeout, HLS_TIMEOUT);
 
     if(this._generation !== 0) {
       return this._generateHlsPlaylist(baseUrl);
